@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brightloop Subscription Management</title>
+<style>
+:root{--bg:#f3f5f4;--card:#fff;--ink:#17231f;--mute:#5d6b66;--line:#dbe2df;--acc:#0e6b57;--acc2:#e8f3ef;--bad:#b3261e;--warn:#9a6200}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+h1,h2,h3{font-family:Georgia,serif;margin:0 0 .6rem}
+#app{display:flex;min-height:100vh}nav{width:210px;background:#12352c;color:#d7ebe4;padding:16px 10px;flex-shrink:0}
+nav b{display:block;font:700 20px Georgia,serif;color:#fff;padding:0 8px 14px}
+nav a{display:block;padding:8px 10px;border-radius:6px;color:inherit;cursor:pointer}nav a.on,nav a:hover{background:#1d4d41;color:#fff}
+main{flex:1;padding:20px;min-width:0}.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:8px;flex-wrap:wrap}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;margin-bottom:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px}.kpi span{color:var(--mute);font-size:12px}.kpi div{font:700 22px Georgia,serif}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}th{font-size:12px;color:var(--mute)}
+.tw{overflow-x:auto}button{font:inherit;padding:6px 11px;border:1px solid var(--acc);background:var(--acc);color:#fff;border-radius:6px;cursor:pointer;margin:1px}
+button.s{background:#fff;color:var(--acc)}button.d{background:#fff;color:var(--bad);border-color:var(--bad)}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #e0a100;outline-offset:1px}
+input,select,textarea{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;width:100%;background:#fff}
+.tag{padding:2px 8px;border-radius:99px;background:var(--acc2);color:var(--acc);font-size:12px}.tag.bad{background:#fbe9e7;color:var(--bad)}.tag.warn{background:#fff3d6;color:var(--warn)}
+.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}.bar input,.bar select{width:auto}
+#modal{position:fixed;inset:0;background:#0007;display:none;align-items:center;justify-content:center;padding:12px}#modal.on{display:flex}
+#modal form{background:#fff;border-radius:10px;padding:18px;width:440px;max-width:100%;max-height:92vh;overflow:auto}
+#modal label{display:block;margin:8px 0 2px;font-size:12px;color:var(--mute)}.err{color:var(--bad);margin:6px 0}
+.auth{max-width:380px;margin:8vh auto;padding:0 12px}.muted{color:var(--mute)}
+#toast{position:fixed;bottom:16px;right:16px;background:#12352c;color:#fff;padding:10px 14px;border-radius:8px;display:none}
+@media(max-width:700px){#app{flex-direction:column}nav{width:auto;display:flex;flex-wrap:wrap}nav b{width:100%}}
+</style></head><body>
+<div id="root"></div><div id="modal"></div><div id="toast"></div>
+<script>
+// ---------- storage & seed ----------
+const KEY='brightloop_v1',today=()=>new Date().toISOString().slice(0,10);
+const uid=()=>Math.random().toString(36).slice(2,9);
+let S,U=null,view='dash',flt={};
+function load(){try{S=JSON.parse(localStorage.getItem(KEY))}catch(e){S=null}
+ if(!S){S={seq:{sub:0,inv:0,quo:0},users:[{email:'admin@brightloop.com',pw:'Admin@12345',role:'admin',name:'Admin'},{email:'staff@brightloop.com',pw:'Staff@12345',role:'staff',name:'Staff'}],
+ taxes:[{id:'t1',name:'GST 18%',rate:18},{id:'t0',name:'No tax',rate:0}],
+ products:[{id:'p1',name:'Brightloop CRM',type:'Software',sales:1000,cost:400,notes:'Core CRM',variants:[{attr:'Brand',val:'Odoo',extra:560},{attr:'Brand',val:'Zoho',extra:300}]},{id:'p2',name:'Extra Seat Add-on',type:'Add-on',sales:150,cost:40,notes:'Per seat',variants:[]}],
+ plans:[{id:'pl1',name:'Monthly Standard',price:1000,period:'monthly',minQty:1,from:'2026-01-01',to:'2030-12-31',autoClose:true,canClose:true,canPause:true,canRenew:true},{id:'pl2',name:'Yearly Enterprise',price:10000,period:'yearly',minQty:5,from:'2026-01-01',to:'2030-12-31',autoClose:false,canClose:true,canPause:false,canRenew:true}],
+ discounts:[],templates:[{id:'qt1',name:'CRM Starter Quote',planId:'pl1',days:30,lines:[{pid:'p1',vi:-1,qty:1},{pid:'p2',vi:-1,qty:2}]}],
+ subs:[],invoices:[],payments:[]};save()}
+ if(!S.plans.some(p=>p.id==='pl3')){S.plans.push({id:'pl3',name:'Daily Trial',price:50,period:'daily',minQty:1,from:'2026-01-01',to:'2030-12-31',autoClose:true,canClose:true,canPause:true,canRenew:true},{id:'pl4',name:'Weekly Basic',price:300,period:'weekly',minQty:1,from:'2026-01-01',to:'2030-12-31',autoClose:true,canClose:true,canPause:true,canRenew:true});save()}}
+let PM=null,UM=null;function save(){PM=null;UM=null;try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}
+// ---------- helpers ----------
+const $=id=>document.getElementById(id),m=n=>(+n||0).toFixed(2),by=(a,id)=>a.find(x=>x.id===id);
+const toast=t=>{const e=$('toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',2500)};
+function addP(d,per,n=1){const x=new Date(d+'T00:00:00Z');if(per==='daily')x.setUTCDate(x.getUTCDate()+n);else if(per==='weekly')x.setUTCDate(x.getUTCDate()+7*n);else if(per==='monthly')x.setUTCMonth(x.getUTCMonth()+n);else x.setUTCFullYear(x.getUTCFullYear()+n);return x.toISOString().slice(0,10)}
+const perMonth={daily:30,weekly:4.345,monthly:1,yearly:1/12};
+const can=(...r)=>r.includes(U.role);
+const custName=e=>{if(!UM){UM={};S.users.forEach(u=>UM[u.email]=u.name)}return UM[e]||e};
+function pwOk(p){return p.length>8&&/[A-Z]/.test(p)&&/[a-z]/.test(p)&&/[^A-Za-z0-9]/.test(p)}
+function lineInfo(l){const p=by(S.products,l.pid);if(!p)return{name:'?',price:0};const v=l.vi>=0?p.variants[l.vi]:null;return{name:p.name+(v?` (${v.attr}: ${v.val})`:''),price:p.sales+(v?v.extra:0)}}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+// ---------- generic modal form ----------
+function form(title,fields,cb,extra=''){
+ const h=fields.map(f=>`<label>${f.l}</label>`+(f.t==='select'?`<select name="${f.k}">${f.o.map(o=>`<option value="${esc(o[0])}">${esc(o[1])}</option>`).join('')}</select>`:f.t==='area'?`<textarea name="${f.k}"></textarea>`:`<input name="${f.k}" type="${f.t||'text'}" value="${esc(f.v??'')}" ${f.r===false?'':'required'}>`)).join('');
+ const M=$('modal');M.innerHTML=`<form><h3>${title}</h3>${h}<div class="err" id="ferr"></div><div style="margin-top:12px"><button type="button" onclick="submitForm()">Save</button> <button type="button" class="s" onclick="closeM()">Cancel</button></div></form>`;M.classList.add('on');
+ const fm=M.querySelector('form');fm.onsubmit=e=>{e.preventDefault();submitForm()};
+ window.submitForm=()=>{if(!fm.reportValidity())return;const d=Object.fromEntries(new FormData(fm));try{const r=cb(d);if(r)$('ferr').textContent=r;else{closeM();save();render();toast('Saved')}}catch(x){$('ferr').textContent='Error: '+x.message}}}
+const closeM=()=>$('modal').classList.remove('on');
+// ---------- auth ----------
+function authView(mode='login'){
+ const f=mode==='login'?`<label>Email</label><input id="e" type="email"><label>Password</label><input id="p" type="password"><div class="err" id="er"></div><button onclick="doLogin()">Log in</button> <button class="s" onclick="authView('signup')">Create account</button> <button class="s" onclick="authView('reset')">Forgot password</button><p class="muted">Demo: admin@brightloop.com / Admin@12345<br>staff@brightloop.com / Staff@12345</p>`
+ :mode==='signup'?`<label>Name</label><input id="n"><label>Email</label><input id="e" type="email"><label>Password</label><input id="p" type="password"><p class="muted">More than 8 characters with an uppercase letter, a lowercase letter and a special character.</p><div class="err" id="er"></div><button onclick="doSignup()">Sign up</button> <button class="s" onclick="authView()">Back</button>`
+ :`<label>Registered email</label><input id="e" type="email"><div class="err" id="er"></div><button onclick="doReset()">Send reset link</button> <button class="s" onclick="authView()">Back</button>`;
+ $('root').innerHTML=`<div class="auth card"><h2>Brightloop</h2>${f}</div>`}
+function doLogin(){const u=S.users.find(u=>u.email===$('e').value.trim().toLowerCase()&&u.pw===$('p').value);if(!u)return $('er').textContent='Wrong email or password.';U=u;view=u.role==='customer'?'subs':'dash';render()}
+function doSignup(){const e=$('e').value.trim().toLowerCase(),p=$('p').value;if(!e||!$('n').value)return $('er').textContent='Enter your name and email.';
+ if(S.users.some(u=>u.email===e))return $('er').textContent='This email already has an account.';
+ if(!pwOk(p))return $('er').textContent='Password needs 9+ characters, upper, lower and a special character.';
+ U={email:e,pw:p,role:'customer',name:$('n').value};S.users.push(U);save();view='subs';render()}
+function doReset(){const e=$('e').value.trim().toLowerCase();if(!S.users.some(u=>u.email===e))return $('er').textContent='No account with that email.';
+ const tok=uid();$('er').style.color='#0e6b57';$('er').innerHTML=`Reset link sent to ${esc(e)} (demo: <a href="#" onclick="newPw('${e}');return false">open link ${tok}</a>)`}
+function newPw(e){form('Set new password',[{k:'p',l:'New password',t:'password'}],d=>{if(!pwOk(d.p))return 'Password needs 9+ characters, upper, lower and a special character.';S.users.find(u=>u.email===e).pw=d.p;toast('Password updated')})}
+const logout=()=>{U=null;authView()};
+// ---------- business logic ----------
+function subTotals(lines,discs=[]){let sub=0,tax=0,disc=0;const ls=lines.map(l=>{const i=lineInfo(l),amt=l.qty*i.price;return{...l,name:i.name,price:i.price,amt,d:0}});
+ const t=today();const ok=d=>d.from<=t&&t<=d.to&&d.used<d.limit;
+ ls.forEach(l=>{discs.filter(d=>d.scope==='product'&&d.pid===l.pid&&ok(d)&&l.amt>=d.minAmt&&l.qty>=d.minQty).forEach(d=>{l.d+=d.kind==='percent'?l.amt*d.value/100:Math.min(d.value,l.amt);d.hit=1})});
+ let base=ls.reduce((a,l)=>a+l.amt-l.d,0);
+ discs.filter(d=>d.scope==='sub'&&ok(d)&&base>=d.minAmt&&ls.reduce((a,l)=>a+l.qty,0)>=d.minQty).forEach(d=>{const x=d.kind==='percent'?base*d.value/100:Math.min(d.value,base);ls.forEach(l=>l.d+=(l.amt-l.d)/base*x);base-=x;d.hit=1;});
+ ls.forEach(l=>{const r=(by(S.taxes,(by(S.products,l.pid)||{}).taxId||l.taxId||'t1')||{rate:0}).rate;l.tax=(l.amt-l.d)*r/100;sub+=l.amt;disc+=l.d;tax+=l.tax});
+ return{lines:ls,sub,disc,tax,total:sub-disc+tax}}
+function runBilling(asOf){let made=0,skipped=0;const keys=new Set(S.invoices.map(i=>i.key));
+ S.subs.filter(s=>s.status==='Active'&&!s.paused).forEach(s=>{const pl=by(S.plans,s.planId);let guard=0;
+  while(s.nextBill<=asOf&&s.nextBill<=s.end&&guard++<60){const key=s.id+'@'+s.nextBill;
+   if(keys.has(key)){skipped++;s.nextBill=addP(s.nextBill,pl.period);continue}
+   S.discounts.forEach(d=>d.hit=0);const T=subTotals(s.lines,S.discounts);S.discounts.forEach(d=>{if(d.hit)d.used++});
+   const no='INV-'+String(++S.seq.inv).padStart(5,'0');
+   S.invoices.push({id:uid(),no,key,subId:s.id,subNo:s.no,cust:s.cust,date:s.nextBill,due:addP(s.nextBill,'daily',s.terms),status:'Draft',...T});keys.add(key);made++;
+   s.nextBill=addP(s.nextBill,pl.period)}
+  if(pl.autoClose&&s.end<asOf&&s.nextBill>s.end)s.status='Closed'});
+ save();return{made,skipped}}
+const paid=i=>{if(!PM){PM={};S.payments.forEach(p=>PM[p.invId]=(PM[p.invId]||0)+p.amt)}return PM[i.id]||0};
+const overdue=i=>i.status==='Confirmed'&&i.due<today()&&i.total-paid(i)>0.005;
+function setSub(id,st){const s=by(S.subs,id);s.status=st;if(st==='Active'&&!s.nextBill)s.nextBill=s.start;save();render()}
+// ---------- views ----------
+function table(cols,rows,{lim=100,total}={}){return`<div class="tw"><table><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr>${rows.slice(0,lim).map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')||`<tr><td colspan="${cols.length}" class="muted">Nothing here yet.</td></tr>`}</table></div>${(total||rows.length)>lim?`<p class="muted">Showing ${lim} of ${total||rows.length}. Use filters to narrow down.</p>`:''}`}
+const tag=(s,c='')=>`<span class="tag ${c}">${s}</span>`;
+const mine=a=>U.role==='customer'?a.filter(x=>x.cust===U.email):a;
+const V={
+dash(){const act=S.subs.filter(s=>s.status==='Active'),f=flt.d||{},from=f.from||'',to=f.to||'9999';
+ const inv=S.invoices.filter(i=>i.date>=from&&i.date<=to),pays=S.payments.filter(p=>p.date>=from&&p.date<=to);
+ const rev=pays.reduce((a,p)=>a+p.amt,0),owed=inv.filter(i=>i.status==='Confirmed').reduce((a,i)=>a+i.total-paid(i),0),od=inv.filter(overdue);
+ const mrr=act.filter(s=>!s.paused).reduce((a,s)=>a+subTotals(s.lines).total*(perMonth[by(S.plans,s.planId).period]),0);
+ return`<div class="top"><h2>Dashboard</h2><div class="bar">From <input type="date" id="df" value="${f.from||''}"> To <input type="date" id="dt" value="${f.to||''}"><button class="s" onclick="flt.d={from:df.value,to:dt.value};render()">Filter</button></div></div>
+ <div class="kpis"><div class="kpi"><span>Active subscriptions</span><div>${act.length}</div></div><div class="kpi"><span>Monthly recurring revenue</span><div>${m(mrr)}</div></div><div class="kpi"><span>Revenue collected</span><div>${m(rev)}</div></div><div class="kpi"><span>Outstanding</span><div>${m(owed)}</div></div><div class="kpi"><span>Overdue invoices</span><div>${od.length}</div></div></div>
+ <div class="card"><h3>Overdue invoices</h3>${table(['Invoice','Customer','Due','Balance'],od.slice(0,100).map(i=>[i.no,esc(custName(i.cust)),i.due,m(i.total-paid(i))]),{total:od.length})}</div>
+ <div class="card"><h3>Subscriptions by status</h3>${['Draft','Quotation','Confirmed','Active','Closed'].map(s=>tag(s+': '+S.subs.filter(x=>x.status===s).length)).join(' ')}</div>${U.role==='admin'?`<div class="card"><h3>Performance test</h3><p class="muted">Loads 3,000 demo subscriptions with invoices and payments. The time each page took to build is shown at the bottom of every page.</p><button onclick="loadDemo()">Load 3,000 demo subscriptions</button> <button class="d" onclick="clearDemo()">Remove demo data</button></div>`:''}`},
+subs(){const q=(flt.sq||'').toLowerCase(),st=flt.ss||'';let rows=mine(S.subs).filter(s=>(!st||s.status===st)&&(!q||(s.no+custName(s.cust)).toLowerCase().includes(q)));
+ return`<div class="top"><h2>${U.role==='customer'?'My subscriptions':'Subscriptions'}</h2><button onclick="newSub()">${U.role==='customer'?'Subscribe to a plan':'New subscription'}</button></div>
+ <div class="bar"><input placeholder="Search number or customer" value="${esc(flt.sq||'')}" onchange="flt.sq=this.value;render()"><select onchange="flt.ss=this.value;render()"><option value="">All statuses</option>${['Draft','Quotation','Confirmed','Active','Closed'].map(s=>`<option ${st===s?'selected':''}>${s}</option>`).join('')}</select></div>
+ <div class="card">${table(['No.','Customer','Plan','Start','Expiry','Next bill','Total','Status','Actions'],rows.slice(0,100).map(s=>{const pl=by(S.plans,s.planId),T=subTotals(s.lines);
+  const nx={Draft:'Quotation',Quotation:'Confirmed',Confirmed:'Active'}[s.status];let a=`<button class="s" onclick="subView('${s.id}')">View</button>`;
+  if(can('admin','staff')&&nx)a+=`<button onclick="setSub('${s.id}','${nx}')">${{Quotation:'Send quote',Confirmed:'Confirm',Active:'Activate'}[nx]}</button>`;
+  if(U.role==='customer'&&s.status==='Quotation')a+=`<button onclick="setSub('${s.id}','Confirmed')">Accept quote</button>`;
+  if(s.status==='Active'){if(pl.canPause)a+=`<button class="s" onclick="pause('${s.id}')">${s.paused?'Resume':'Pause'}</button>`;if(pl.canRenew)a+=`<button class="s" onclick="renew('${s.id}')">Renew</button>`;if(pl.canClose)a+=`<button class="d" onclick="setSub('${s.id}','Closed')">Close</button>`}
+  return[s.no,esc(custName(s.cust)),pl.name,s.start,s.end,s.nextBill||'-',m(T.total),tag(s.status+(s.paused?' (paused)':''),s.status==='Closed'?'bad':''),a]}),{total:rows.length})}</div>`},
+invs(){const q=(flt.iq||'').toLowerCase(),st=flt.is||'';let rows=mine(S.invoices).filter(i=>(!st||(st==='Overdue'?overdue(i):i.status===st))&&(!q||(i.no+custName(i.cust)).toLowerCase().includes(q)));
+ const staff=can('admin','staff');
+ return`<div class="top"><h2>${U.role==='customer'?'My invoices':'Invoices'}</h2>${staff?`<div class="bar">Bill up to <input type="date" id="bd" value="${today()}"><button onclick="bill()">Run billing</button></div>`:''}</div>
+ <div class="bar"><input placeholder="Search invoice or customer" value="${esc(flt.iq||'')}" onchange="flt.iq=this.value;render()"><select onchange="flt.is=this.value;render()"><option value="">All</option>${['Draft','Confirmed','Paid','Cancelled','Overdue'].map(s=>`<option ${st===s?'selected':''}>${s}</option>`).join('')}</select></div>
+ <div class="card">${table(['Invoice','Customer','Date','Due','Total','Paid','Status','Actions'],rows.slice().reverse().slice(0,100).map(i=>{let a=`<button class="s" onclick="invView('${i.id}')">View</button>`;
+  if(staff){if(i.status==='Draft')a+=`<button onclick="invSet('${i.id}','Confirmed')">Confirm</button>`;if(i.status!=='Paid'&&i.status!=='Cancelled')a+=`<button class="d" onclick="invSet('${i.id}','Cancelled')">Cancel</button>`;if(i.status==='Confirmed')a+=`<button onclick="newPay('${i.id}')">Record payment</button>`;a+=`<button class="s" onclick="mail('${i.id}')">Send</button>`}
+  return[i.no,esc(custName(i.cust)),i.date,i.due,m(i.total),m(paid(i)),tag(overdue(i)?'Overdue':i.status,overdue(i)?'bad':i.status==='Cancelled'?'warn':''),a]}),{total:rows.length})}</div>`},
+pays(){return`<div class="top"><h2>Payments</h2></div><div class="card">${table(['Date','Invoice','Customer','Method','Amount','Note'],S.payments.slice().reverse().slice(0,100).map(p=>{const i=by(S.invoices,p.invId)||{};return[p.date,i.no,esc(custName(i.cust)),p.method,m(p.amt),esc(p.note)]}),{total:S.payments.length})}</div>`},
+prods(){const A=U.role==='admin';return`<div class="top"><h2>Products</h2>${A?'<button onclick="newProd()">New product</button>':''}</div><div class="card">${table(['Name','Type','Sales price','Cost','Tax','Variants','Notes',''],S.products.map(p=>[esc(p.name),esc(p.type),m(p.sales),m(p.cost),esc((by(S.taxes,p.taxId||'t1')||{}).name),p.variants.map(v=>`${esc(v.attr)}: ${esc(v.val)} +${v.extra}`).join(', ')||'-',esc(p.notes),A?`<button class="s" onclick="newVar('${p.id}')">Add variant</button><button class="s" onclick="chTax('${p.id}')">Change tax</button>`:''])) }</div>`},
+plans(){const A=U.role==='admin';return`<div class="top"><h2>Plans</h2>${A?'<button onclick="newPlan()">New plan</button>':''}</div><div class="card">${table(['Name','Price','Billing','Min qty','Available','Auto-close','Close early','Pause','Renew'],S.plans.map(p=>[esc(p.name),m(p.price),p.period,p.minQty,p.from+' → '+p.to,p.autoClose?'Yes':'No',p.canClose?'Yes':'No',p.canPause?'Yes':'No',p.canRenew?'Yes':'No']))}</div>`},
+taxes(){return`<div class="top"><h2>Taxes</h2><button onclick="newTax()">New tax rule</button></div><div class="card">${table(['Name','Rate %'],S.taxes.map(t=>[esc(t.name),t.rate]))}</div>`},
+discs(){return`<div class="top"><h2>Discount rules</h2><button onclick="newDisc()">New discount</button></div><div class="card">${table(['Name','Type','Value','Applies to','Min amount','Min qty','Valid','Used / limit'],S.discounts.map(d=>[esc(d.name),d.kind,d.value,d.scope==='sub'?'Whole subscription':esc((by(S.products,d.pid)||{}).name),d.minAmt,d.minQty,d.from+' → '+d.to,d.used+' / '+d.limit]))}</div>`},
+tpls(){return`<div class="top"><h2>Quotation templates</h2><button onclick="newTpl()">New template</button></div><div class="card">${table(['Name','Plan','Valid (days)','Lines'],S.templates.map(t=>[esc(t.name),by(S.plans,t.planId).name,t.days,t.lines.map(l=>lineInfo(l).name+' ×'+l.qty).join(', ')]))}</div>`},
+staff(){return`<div class="top"><h2>Staff</h2><button onclick="newStaff()">Add staff member</button></div><div class="card">${table(['Name','Email','Role'],S.users.filter(u=>u.role!=='customer').map(u=>[esc(u.name),esc(u.email),u.role]))}</div>`},
+custs(){return`<div class="top"><h2>Customers</h2></div><div class="card">${table(['Name','Email','Subscriptions'],S.users.filter(u=>u.role==='customer').map(u=>[esc(u.name),esc(u.email),S.subs.filter(s=>s.cust===u.email).length]))}</div>`}};
+const NAV={admin:[['dash','Dashboard'],['subs','Subscriptions'],['invs','Invoices'],['pays','Payments'],['prods','Products'],['plans','Plans'],['taxes','Taxes'],['discs','Discounts'],['tpls','Templates'],['custs','Customers'],['staff','Staff']],
+ staff:[['dash','Dashboard'],['subs','Subscriptions'],['invs','Invoices'],['pays','Payments'],['prods','Products'],['plans','Plans'],['custs','Customers']],customer:[['subs','My subscriptions'],['invs','My invoices']]};
+function render(){if(!U)return authView();const t0=performance.now();
+ $('root').innerHTML=`<div id="app"><nav><b>Brightloop</b>${NAV[U.role].map(n=>`<a class="${view===n[0]?'on':''}" onclick="view='${n[0]}';render()">${n[1]}</a>`).join('')}<a onclick="logout()">Log out (${esc(U.role)})</a></nav><main>${V[view]()}</main></div>`;$('root').querySelector('main').insertAdjacentHTML('beforeend',`<p class="muted">Page built in ${Math.round(performance.now()-t0)} ms</p>`)}
+// ---------- actions ----------
+function newProd(){form('New product',[{k:'name',l:'Name'},{k:'type',l:'Type',v:'Software'},{k:'sales',l:'Sales price',t:'number'},{k:'cost',l:'Cost price',t:'number'},{k:'taxId',l:'Tax rule',t:'select',o:S.taxes.map(t=>[t.id,t.name+' ('+t.rate+'%)'])},{k:'notes',l:'Notes',r:false}],d=>{S.products.push({id:uid(),name:d.name,type:d.type,sales:+d.sales,cost:+d.cost,taxId:d.taxId,notes:d.notes,variants:[]})})}
+function chTax(id){form('Change tax rule',[{k:'taxId',l:'Tax rule',t:'select',o:S.taxes.map(t=>[t.id,t.name+' ('+t.rate+'%)'])}],d=>{by(S.products,id).taxId=d.taxId})}
+function newVar(id){form('Add variant',[{k:'attr',l:'Attribute (e.g. Brand)',v:'Brand'},{k:'val',l:'Value (e.g. Odoo)'},{k:'extra',l:'Extra price',t:'number'}],d=>{by(S.products,id).variants.push({attr:d.attr,val:d.val,extra:+d.extra})})}
+function newPlan(){form('New plan',[{k:'name',l:'Name'},{k:'price',l:'Price',t:'number'},{k:'period',l:'Billing period',t:'select',o:['daily','weekly','monthly','yearly'].map(x=>[x,x])},{k:'minQty',l:'Minimum quantity',t:'number',v:1},{k:'from',l:'Available from',t:'date',v:today()},{k:'to',l:'Available until',t:'date'},{k:'autoClose',l:'Closes automatically at end?',t:'select',o:[['1','Yes'],['','No']]},{k:'canClose',l:'Can be closed early?',t:'select',o:[['1','Yes'],['','No']]},{k:'canPause',l:'Can be paused?',t:'select',o:[['1','Yes'],['','No']]},{k:'canRenew',l:'Can be renewed?',t:'select',o:[['1','Yes'],['','No']]}],d=>{if(d.to<d.from)return 'End date must be after start date.';S.plans.push({id:uid(),name:d.name,price:+d.price,period:d.period,minQty:+d.minQty,from:d.from,to:d.to,autoClose:!!d.autoClose,canClose:!!d.canClose,canPause:!!d.canPause,canRenew:!!d.canRenew})})}
+function newTax(){form('New tax rule',[{k:'name',l:'Name'},{k:'rate',l:'Rate %',t:'number'}],d=>{S.taxes.push({id:uid(),name:d.name,rate:+d.rate})})}
+function newDisc(){form('New discount rule',[{k:'name',l:'Name'},{k:'kind',l:'Type',t:'select',o:[['percent','Percentage'],['fixed','Fixed amount']]},{k:'value',l:'Value',t:'number'},{k:'scope',l:'Applies to',t:'select',o:[['sub','Whole subscription'],['product','Specific product']]},{k:'pid',l:'Product (if specific)',t:'select',o:S.products.map(p=>[p.id,p.name])},{k:'minAmt',l:'Minimum purchase amount',t:'number',v:0},{k:'minQty',l:'Minimum quantity',t:'number',v:0},{k:'from',l:'Start date',t:'date',v:today()},{k:'to',l:'End date',t:'date'},{k:'limit',l:'Usage limit',t:'number',v:100}],d=>{S.discounts.push({id:uid(),name:d.name,kind:d.kind,value:+d.value,scope:d.scope,pid:d.pid,minAmt:+d.minAmt,minQty:+d.minQty,from:d.from,to:d.to,limit:+d.limit,used:0})})}
+function lineOpts(){const o=[];S.products.forEach(p=>{o.push([p.id+'|-1',p.name+' ('+m(p.sales)+')']);p.variants.forEach((v,i)=>o.push([p.id+'|'+i,`${p.name} – ${v.attr}: ${v.val} (+${v.extra})`]))});return o}
+function newTpl(){form('New quotation template',[{k:'name',l:'Name'},{k:'planId',l:'Plan',t:'select',o:S.plans.map(p=>[p.id,p.name])},{k:'days',l:'Valid for (days)',t:'number',v:30},{k:'line',l:'Product',t:'select',o:lineOpts()},{k:'qty',l:'Quantity',t:'number',v:1}],d=>{const[p,v]=d.line.split('|');S.templates.push({id:uid(),name:d.name,planId:d.planId,days:+d.days,lines:[{pid:p,vi:+v,qty:+d.qty}]})})}
+function newStaff(){if(U.role!=='admin')return toast('Only admin can add staff');form('Add staff member',[{k:'name',l:'Name'},{k:'email',l:'Email',t:'email'},{k:'pw',l:'Temporary password',t:'password'}],d=>{const e=d.email.toLowerCase();if(S.users.some(u=>u.email===e))return 'This email already has an account.';if(!pwOk(d.pw))return 'Password needs 9+ characters, upper, lower and a special character.';S.users.push({email:e,pw:d.pw,role:'staff',name:d.name})})}
+function newSub(){const cs=U.role==='customer'?[U]:S.users.filter(u=>u.role==='customer');if(!cs.length)return toast('No customers yet. Ask a customer to sign up.');
+ form('New subscription',[{k:'cust',l:'Customer',t:'select',o:cs.map(c=>[c.email,c.name+' <'+c.email+'>'])},{k:'tpl',l:'Start from template',t:'select',o:[['','None (pick product below)']].concat(S.templates.map(t=>[t.id,t.name]))},{k:'planId',l:'Plan (used when no template)',t:'select',o:S.plans.map(p=>[p.id,p.name])},{k:'line',l:'Product (used when no template)',t:'select',o:lineOpts()},{k:'qty',l:'Quantity',t:'number',v:1},{k:'start',l:'Start date',t:'date',v:today()},{k:'end',l:'Expiry date',t:'date',v:addP(today(),'yearly')},{k:'terms',l:'Payment terms (days)',t:'number',v:15}],d=>{
+  let planId=d.planId,lines,valid='';const t=by(S.templates,d.tpl);
+  if(t){planId=t.planId;lines=t.lines.map(l=>({...l,taxId:'t1'}));valid=addP(today(),'daily',t.days)}else{const[p,v]=d.line.split('|');lines=[{pid:p,vi:+v,qty:+d.qty,taxId:'t1'}]}
+  const pl=by(S.plans,planId);if(d.start<pl.from||d.start>pl.to)return 'This plan is not available on that start date.';
+  if(d.end<d.start)return 'Expiry must be after start date.';if(lines.some(l=>l.qty<pl.minQty))return 'Quantity is below the plan minimum of '+pl.minQty+'.';
+  S.subs.push({id:uid(),no:'SUB-'+String(++S.seq.sub).padStart(5,'0'),cust:d.cust,planId,start:d.start,end:d.end,terms:+d.terms,lines,status:U.role==='customer'?'Quotation':'Draft',validUntil:valid,nextBill:''})})}
+function pause(id){const s=by(S.subs,id);s.paused=!s.paused;save();render()}
+function renew(id){const s=by(S.subs,id),pl=by(S.plans,s.planId);s.end=addP(s.end,pl.period,{daily:30,weekly:12,monthly:12,yearly:1}[pl.period]);save();render();toast('Renewed until '+s.end)}
+function bill(){const r=runBilling($('bd').value);render();toast(`${r.made} invoices created, ${r.skipped} already billed`)}
+function invSet(id,st){by(S.invoices,id).status=st;save();render()}
+function mail(id){toast('Invoice '+by(S.invoices,id).no+' sent to '+by(S.invoices,id).cust)}
+function newPay(id){const i=by(S.invoices,id),bal=i.total-paid(i);form('Record payment for '+i.no,[{k:'method',l:'Method',t:'select',o:['Bank transfer','Card','UPI','Cash','Cheque'].map(x=>[x,x])},{k:'amt',l:'Amount',t:'number',v:m(bal)},{k:'date',l:'Date',t:'date',v:today()},{k:'note',l:'Note',r:false}],d=>{const a=+d.amt;if(a<=0||a>bal+0.005)return 'Amount must be between 0 and the balance of '+m(bal)+'.';S.payments.push({id:uid(),invId:id,method:d.method,amt:a,date:d.date,note:d.note});PM=null;if(i.total-paid(i)<0.005)i.status='Paid'})}
+function invView(id){const i=by(S.invoices,id);$('modal').innerHTML=`<form onsubmit="return false"><h3>${i.no}</h3><p>${esc(custName(i.cust))} · Subscription ${i.subNo}<br>Date ${i.date} · Due ${i.due} · ${i.status}</p>${table(['Item','Qty','Price','Discount','Tax','Amount'],i.lines.map(l=>[esc(l.name),l.qty,m(l.price),m(l.d),m(l.tax),m(l.amt-l.d+l.tax)]))}<p><b>Subtotal ${m(i.sub)} · Discount ${m(i.disc)} · Tax ${m(i.tax)} · Total ${m(i.total)}</b><br>Paid ${m(paid(i))}</p><button onclick="print()">Print</button> <button class="s" onclick="closeM()">Close</button></form>`;$('modal').classList.add('on')}
+function subView(id){const s=by(S.subs,id),T=subTotals(s.lines);$('modal').innerHTML=`<form onsubmit="return false"><h3>${s.no} · ${s.status}</h3><p>${esc(custName(s.cust))} · ${by(S.plans,s.planId).name}<br>${s.start} → ${s.end} · Terms ${s.terms} days${s.validUntil?' · Quote valid until '+s.validUntil:''}</p>${table(['Product','Qty','Unit price','Tax','Amount'],T.lines.map(l=>[esc(l.name),l.qty,m(l.price),m(l.tax),m(l.amt)]))}<p><b>Total per period ${m(T.total)}</b></p><button class="s" onclick="closeM()">Close</button></form>`;$('modal').classList.add('on')}
+function loadDemo(){toast('Loading demo data...');setTimeout(()=>{const names=['Acme','Globex','Initech','Umbrella','Stark','Wayne','Hooli','Wonka','Soylent','Tyrell'];
+ for(let c=0;c<300;c++)S.users.push({email:`demo${c}@demo.test`,pw:'Demo@12345',role:'customer',name:names[c%10]+' '+(c+1)});
+ const pl=S.plans.find(x=>x.period==='monthly')||S.plans[0],pr=S.products[0];
+ for(let i=0;i<3000;i++){const st=addP(today(),'daily',-Math.floor(Math.random()*60));
+  S.subs.push({id:uid(),no:'SUB-'+String(++S.seq.sub).padStart(5,'0'),cust:`demo${i%300}@demo.test`,planId:pl.id,start:st,end:addP(st,'yearly'),terms:15,lines:[{pid:pr.id,vi:-1,qty:Math.max(pl.minQty,1+i%5),taxId:'t1'}],status:'Active',validUntil:'',nextBill:st,demo:1})}
+ const n0=S.invoices.length,sd=S.discounts;S.discounts=[];runBilling(today());S.discounts=sd;
+ S.invoices.slice(n0).forEach((inv,k)=>{inv.demo=1;inv.status='Confirmed';if(k%10<6){S.payments.push({id:uid(),invId:inv.id,method:['Card','UPI','Bank transfer'][k%3],amt:inv.total,date:today(),note:'demo',demo:1});inv.status='Paid'}});
+ save();render();toast('Loaded 3,000 subscriptions and '+(S.invoices.length-n0)+' invoices')},50)}
+function clearDemo(){S.subs=S.subs.filter(x=>!x.demo);S.invoices=S.invoices.filter(x=>!x.demo);S.payments=S.payments.filter(x=>!x.demo);S.users=S.users.filter(u=>!u.email.endsWith('@demo.test'));save();render();toast('Demo data removed')}
+load();authView();
+</script></body></html>
